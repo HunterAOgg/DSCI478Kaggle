@@ -9,3 +9,5 @@ We are GOATED, on god no cap on a stack, easy 99% accuracy, no cap on g, on moms
 
 
 We at 0.41%
+
+Update: 55%, ez
