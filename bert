@@ -1,0 +1,143 @@
+import tensorflow as tf
+from tensorflow.keras.layers import *
+from tensorflow.keras.models import *
+import tensorflow_addons as tfa
+import tensorflow.keras.backend as K
+import torch
+from sklearn.model_selection import train_test_split
+from transformers import BertTokenizer as tokenization
+import tensorflow as tf
+import tensorflow_hub as hub
+from keras.utils.np_utils import to_categorical
+from sklearn import preprocessing
+from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
+import seaborn as sns
+import numpy as np 
+import pandas as pd
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+config = tf.compat.v1.ConfigProto()
+config.gpu_options.allow_growth = True
+session = tf.compat.v1.Session(config=config)
+
+import numpy as np 
+import pandas as pd
+
+
+df = pd.read_csv("/s/lovelace/c/nobackup/iray/fatemeh/files/Thomas/scripts/emotiontest/scripts/onesix/train_wat_t.csv")
+
+
+_ls = []
+for i in range(len(df)):
+    _ls.append(df['premise'].iloc[i] + "[SEP] " + df['hypothesis'].iloc[i])
+
+df['polished_text']  = _ls
+
+
+print(df.head())
+
+
+m_url = 'https://tfhub.dev/tensorflow/bert_multi_cased_L-12_H-768_A-12/2'
+bert_layer = hub.KerasLayer(m_url, trainable=True)
+max_len = 280
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = tokenization(vocab_file, do_lower_case)
+def bert_encode(textDes,tokenizer, max_len=256):
+    all_tokens = []
+    all_masks = []
+    all_segments = []
+    
+    for text in textDes:
+        text = tokenizer.tokenize(text)
+        text = text[:max_len-2]  
+
+        input_sequence = ["[CLS]"] + text + ["[SEP]"]
+        pad_len = max_len-len(input_sequence)
+        
+        tokens = tokenizer.convert_tokens_to_ids(input_sequence) + [0] * pad_len
+        pad_masks = [1] * len(input_sequence) + [0] * pad_len
+        segment_ids = [0] * max_len
+        
+        all_tokens.append(tokens)
+        all_masks.append(pad_masks)
+        all_segments.append(segment_ids)
+        
+    return np.array(all_tokens), np.array(all_masks), np.array(all_segments)
+
+
+def build_model(bert_layer, max_len=280, learn_rate = 5e-5):
+    input_word_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_word_ids")
+    input_mask = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="input_mask")
+    segment_ids = tf.keras.Input(shape=(max_len,), dtype=tf.int32, name="segment_ids")
+    
+    pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
+    
+    #clf_output = sequence_output[:, 0, :]
+    clf_output = pooled_output
+
+    out = tf.keras.layers.Dense(3, activation='sigmoid')(clf_output)
+    
+    model = tf.keras.models.Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=out)
+    model.compile(optimizer=tf.keras.optimizers.Adam(lr=learn_rate), loss='binary_crossentropy', metrics=['Accuracy'])
+    
+    return model
+
+
+train, test = train_test_split(df, test_size = 0.3, random_state = 42)
+
+train_input = bert_encode(train.polished_text.values, tokenizer, max_len=max_len)
+#test_input = bert_encode(df.polished_text.values, tokenizer, max_len=max_len)
+
+label = preprocessing.LabelEncoder()
+y = train['label']
+y_test = test['label']
+y = label.fit_transform(y)
+y = to_categorical(y)
+
+
+model = build_model(bert_layer, max_len=max_len, learn_rate=1e-5)
+
+
+checkpoint = tf.keras.callbacks.ModelCheckpoint('model.h5', monitor='val_accuracy', save_best_only=True, verbose=0)
+earlystopping = tf.keras.callbacks.EarlyStopping(monitor='val_accuracy', patience=2, verbose=0)
+
+
+train_sh = model.fit(
+    train_input, y,
+    validation_split=0.3,
+    epochs=7,
+    callbacks=[checkpoint, earlystopping],
+    batch_size=16,
+    verbose=0
+)
+
+
+
+d = bert_encode(test.polished_text.values, tokenizer, max_len=max_len)
+
+a = model.predict(d)
+
+
+
+_ls = []
+for i in range(len(a)):
+    pred = a[i]
+    predN = np.asarray(pred)
+    item = np.argmax(predN)
+    _ls.append(item)
+
+
+print("no emotion")
+
+test['Predicted'] = _ls
+print("DS2-2 No emotion: \n")
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+
+
+
+#print('f1 ', f1_score(test['label'], test['Predicted']))
+print('acc ', accuracy_score(test['label'], test['Predicted']))
+#print("precision: ", precision_score(test['label'], test['Predicted']))
+#print("recall: ", recall_score(test['label'], test['Predicted']))
+#confusion_matrix = pd.crosstab(test['label'], test['Predicted'], rownames=['Actual'], colnames=['Predicted'])
