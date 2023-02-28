@@ -1,2 +1,2 @@
 *.code-workspace
-/bert_base_uncased/*
+/bert-output/*
